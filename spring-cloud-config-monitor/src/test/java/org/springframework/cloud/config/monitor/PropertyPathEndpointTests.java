@@ -105,6 +105,47 @@ public class PropertyPathEndpointTests {
 	}
 
 	@Test
+	public void testNotifyIgnoredPath() {
+		PropertyPathNotifier notifier = services -> {
+		};
+
+		PropertyPathEndpoint endpoint = new PropertyPathEndpoint(
+				new CompositePropertyPathNotificationExtractor(Collections.emptyList()), notifier, 20,
+				List.of("docker-compose/.*"));
+
+		assertThat(endpoint.notifyByPath(new HttpHeaders(),
+				Collections.singletonMap("path", "docker-compose/docker-compose.yml")))
+			.isEmpty();
+	}
+
+	@Test
+	public void testNotifyIgnoredAndNonIgnoredPaths() {
+		PropertyPathNotifier notifier = services -> {
+		};
+
+		PropertyPathEndpoint endpoint = new PropertyPathEndpoint(
+				new CompositePropertyPathNotificationExtractor(Collections.emptyList()), notifier, 20,
+				List.of("docker-compose/.*"));
+
+		List<String> paths = List.of("docker-compose/docker-compose.yml", "foo.yml");
+
+		assertThat(endpoint.notifyByForm(new HttpHeaders(), paths)).containsExactly("foo");
+	}
+
+	@Test
+	public void testNotifyNonIgnoredPath() {
+		PropertyPathNotifier notifier = services -> {
+		};
+
+		PropertyPathEndpoint endpoint = new PropertyPathEndpoint(
+				new CompositePropertyPathNotificationExtractor(Collections.emptyList()), notifier, 20,
+				List.of("docker-compose/.*"));
+
+		assertThat(endpoint.notifyByPath(new HttpHeaders(), Collections.singletonMap("path", "foo.yml")))
+			.containsExactly("foo");
+	}
+
+	@Test
 	public void testNotifyLimitsDashes() {
 		PropertyPathEndpoint limitedEndpoint = new PropertyPathEndpoint(
 				new CompositePropertyPathNotificationExtractor(Collections.emptyList()), services -> {
@@ -116,6 +157,20 @@ public class PropertyPathEndpointTests {
 		path.append("a.yml");
 		assertThat(limitedEndpoint.notifyByPath(new HttpHeaders(), Collections.singletonMap("path", path.toString())))
 			.hasSize(2);
+	}
+
+	@Test
+	public void testNotifyLimitsPaths() {
+		PropertyPathNotifier notifier = services -> {
+		};
+
+		PropertyPathEndpoint limitedEndpoint = new PropertyPathEndpoint(
+				new CompositePropertyPathNotificationExtractor(Collections.emptyList()), List.of(notifier), 20, 2,
+				Collections.emptyList());
+
+		List<String> paths = List.of("foo.yml", "bar.yml", "baz.yml");
+
+		assertThat(limitedEndpoint.notifyByForm(new HttpHeaders(), paths)).containsExactly("foo", "bar");
 	}
 
 }

@@ -22,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -61,20 +62,50 @@ public class PropertyPathEndpoint {
 	 */
 	private final int maxDashes;
 
+	/**
+	 * Upper bound on the number of paths processed from a notification. Prevents an
+	 * externally supplied notification from causing an unbounded amount of path
+	 * processing. Configurable via {@code spring.cloud.config.server.monitor.max-paths}.
+	 */
+	private final int maxPaths;
+
+	private final List<Pattern> ignoredPaths;
+
 	public PropertyPathEndpoint(PropertyPathNotificationExtractor extractor, PropertyPathNotifier notifier) {
-		this(extractor, List.of(notifier), MonitorConfigurationProperties.DEFAULT_MAX_DASHES);
+		this(extractor, List.of(notifier), MonitorConfigurationProperties.DEFAULT_MAX_DASHES,
+				MonitorConfigurationProperties.DEFAULT_MAX_PATHS, Collections.emptyList());
 	}
 
 	public PropertyPathEndpoint(PropertyPathNotificationExtractor extractor, PropertyPathNotifier notifier,
 			int maxDashes) {
-		this(extractor, List.of(notifier), maxDashes);
+		this(extractor, List.of(notifier), maxDashes, MonitorConfigurationProperties.DEFAULT_MAX_PATHS,
+				Collections.emptyList());
 	}
 
 	public PropertyPathEndpoint(PropertyPathNotificationExtractor extractor, List<PropertyPathNotifier> notifiers,
 			int maxDashes) {
+		this(extractor, notifiers, maxDashes, MonitorConfigurationProperties.DEFAULT_MAX_PATHS,
+				Collections.emptyList());
+	}
+
+	public PropertyPathEndpoint(PropertyPathNotificationExtractor extractor, PropertyPathNotifier notifier,
+			int maxDashes, List<String> ignoredPaths) {
+		this(extractor, List.of(notifier), maxDashes, MonitorConfigurationProperties.DEFAULT_MAX_PATHS, ignoredPaths);
+	}
+
+	public PropertyPathEndpoint(PropertyPathNotificationExtractor extractor, List<PropertyPathNotifier> notifiers,
+			int maxDashes, List<String> ignoredPaths) {
+		this(extractor, notifiers, maxDashes, MonitorConfigurationProperties.DEFAULT_MAX_PATHS, ignoredPaths);
+	}
+
+	public PropertyPathEndpoint(PropertyPathNotificationExtractor extractor, List<PropertyPathNotifier> notifiers,
+			int maxDashes, int maxPaths, List<String> ignoredPaths) {
 		this.extractor = extractor;
 		this.notifiers = notifiers;
 		this.maxDashes = maxDashes;
+		this.maxPaths = maxPaths;
+		this.ignoredPaths = ignoredPaths == null ? Collections.emptyList()
+				: ignoredPaths.stream().map(Pattern::compile).toList();
 	}
 
 	@PostMapping
@@ -84,8 +115,19 @@ public class PropertyPathEndpoint {
 
 			Set<String> services = new LinkedHashSet<>();
 
-			for (String path : notification.getPaths()) {
-				services.addAll(guessServiceName(path));
+			String[] paths = notification.getPaths();
+			if (paths != null) {
+				int pathCount = Math.min(paths.length, this.maxPaths);
+				for (int i = 0; i < pathCount; i++) {
+					String path = paths[i];
+					if (!isIgnored(path)) {
+						services.addAll(guessServiceName(path));
+					}
+				}
+				if (paths.length > this.maxPaths) {
+					log.warn("Number of paths in notification exceeds the configured maximum of " + this.maxPaths
+							+ " (spring.cloud.config.server.monitor.max-paths); stopping path processing early");
+				}
 			}
 			if (!services.isEmpty()) {
 				for (String service : services) {
@@ -107,6 +149,10 @@ public class PropertyPathEndpoint {
 		String key = "path";
 		map.put(key, request);
 		return notifyByPath(headers, map);
+	}
+
+	private boolean isIgnored(String path) {
+		return path != null && this.ignoredPaths.stream().anyMatch(pattern -> pattern.matcher(path).matches());
 	}
 
 	private Set<String> guessServiceName(String path) {
